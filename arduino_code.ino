@@ -1,5 +1,5 @@
 #define SERIAL_INTERVAL 50
-#define SERIAL_INTERVAL2 100
+#define SERIAL_INTERVAL2 400
 
 #include <Encoder.h>
 #include <Wire.h>
@@ -31,7 +31,7 @@ void setup() {
   Wire.write(0); // set to zero (wakes up the MPU-6050)
   Wire.endTransmission(true);
 
-  Serial.begin(9600);
+  Serial.begin(115200);
   Serial.setTimeout(0.2);
 
   pinMode(motor_enable, OUTPUT);
@@ -40,29 +40,26 @@ void setup() {
   pinMode(LNup, OUTPUT);
   pinMode(LNdn, OUTPUT);
   pinMode(9, OUTPUT);
-  Serial.println("Initialization Complete...");
 }
 
 void loop() {
   if (millis() >= t1) {
     t1 += SERIAL_INTERVAL;
-
     int stringStart = 0, arrayIndex = 0;
-
     if (Serial.available() > 0)
       incoming = Serial.readString();
-    for (int i = 0; i < incoming.length(); i++) {
-      if (incoming.charAt(i) == ',') {
-        command_array[arrayIndex] = "";
-        command_array[arrayIndex] = incoming.substring(stringStart, i);
-        stringStart = (i + 1);
-        arrayIndex++;
+      for (int i = 0; i < incoming.length(); i++) {
+        if (incoming.charAt(i) == ',') {
+          command_array[arrayIndex] = "";
+          command_array[arrayIndex] = incoming.substring(stringStart, i);
+          stringStart = (i + 1);
+          arrayIndex++;
+        }
+        yaw = command_array[0].toInt();
+        pitch = command_array[1].toInt();  
+        joystick_enable = command_array[2].toInt();
+        automated_motor_enable = command_array[3].toInt();
       }
-    }
-    yaw = command_array[0].toInt();
-    pitch = command_array[1].toInt();  
-    joystick_enable = command_array[2].toInt();
-    automated_motor_enable = command_array[3].toInt();
     /*
     Serial.print("yaw:");
     Serial.println(yaw);
@@ -79,12 +76,17 @@ void loop() {
   } 
   if (automated_motor_enable == 1) {
       buzzer();
-      read_pitch();
-      int pitch_i = accel_vals[0];  //current pitch
-      int pitch_f = pitch;               //final pitch
-      set_pitch(pitch_i, pitch_f);
-      automated_motor_enable=0;
-      buzzer();            
+      for(int i=0;i<2;i++){//how many iterations to run on the angle adjustment.  more iterations may mean more accurate
+        read_pitch();
+        int pitch_i = accel_vals[0];  //current pitch
+        int pitch_f = pitch;               //final pitch
+        set_pitch(pitch_i, pitch_f);
+        analogWrite(LNup,0);
+        analogWrite(LNdn,0);
+        delay(1000);
+      }
+    buzzer_f();
+    buzzer_f();       
   }
   //else {
     //digitalWrite(motor_enable, LOW);  //ensure motors can't move if they aren't in manual control mode
@@ -92,46 +94,50 @@ void loop() {
 }
 
 void set_pitch(int pitch_i, int pitch_f){
-  read_pitch();  //this function updates an array with pitch and yaw values
-  int pitch_d=pitch_f-pitch_i; //if negative, current pitch is higher than final, if positive current is below final
-  int normalized_pd=abs(pitch_d);
-  int pitch_c=accel_vals[0];
-  int pitch_c_d=abs(pitch_c-pitch_f);
-  int PWM_max = map(normalized_pd,0,16384,0,255);
+  if(pitch_f<100)
+    return;
+  if(pitch_f>15000)
+    return;
+  int pi_rnd=round_int(pitch_i,100);
+  int pf_rnd=round_int(pitch_f,100);
+  if(pi_rnd!=pf_rnd){//is current equal to final?
+    signed long int dTheta=abs(pitch_i-pitch_f); //the range over which the angle will be adjusted
+    signed long int dTheta_c=dTheta; //initializing current error to be dTheta.  This value will change as angle is adjusted
+    int PWMm=map(dTheta,0,16384,100,200); //calculating maximum PWM.  Note 50 is the lowest possible PWM max.  16384 = 90 degrees, a.k.a. the maximum delta theta.
+    int pitch_c=pitch_i;//initializing current pitch to initial pitch
+    int fi=0;
+    int PWM=0;
+    while(dTheta_c > 100){
+      fi=abs(dTheta-dTheta_c);//starts at zero, grows until reaches max value then recedes back down
+      PWM=PWMm*sin(fi*3.1415/dTheta)+30; //dTheta defines period, fi defines where in the period we are
+      if(PWM<0)//error checking and ensuring slow adjtment
+      return;
+      if(dTheta<1000)
+      PWM=25;
+      if(pitch_c-pitch_f<0){
+      analogWrite(LNup,PWM);
+      analogWrite(LNdn,0);
+      }
+      else{
+      analogWrite(LNdn,PWM);
+      analogWrite(LNup,0);
+      }
 
-  if(pitch_d<0){  //adjusting elev down
-    while(pitch_c>pitch_f){//implementing simple triangle curve to motor velocity
-      if(pitch_c_d>=normalized_pd/2){
-        mp=map(pitch_c_d,0,normalized_pd/2,PWM_max,50);
-        analogWrite(LNdn,mp);
-      }
-      else if(pitch_c_d<normalized_pd/2){
-        mp=map(pitch_c_d,0,normalized_pd/2,50,PWM_max);
-        analogWrite(LNdn,mp);
-      }
       read_pitch();
-      pitch_c=accel_vals[0];
-      pitch_c_d=abs(pitch_c-pitch_f);
+      pitch_c=(accel_vals[0]+pitch_c)/2;
+      dTheta_c=abs(pitch_c-pitch_f);
+    }
+    return;
     }
   }
-  else{           //adjusting elev up
-    while(pitch_c<pitch_f){      
-      if(pitch_c_d>=normalized_pd/2){
-        mp=map(pitch_c_d,0,normalized_pd/2,PWM_max,50);
-        analogWrite(LNup,mp);
-      }
-      else if(pitch_c_d<normalized_pd/2){
-        mp=map(pitch_c_d,0,normalized_pd/2,50,PWM_max);
-        analogWrite(LNup,mp);
-      }
-      read_pitch();
-      pitch_c=accel_vals[0];
-      pitch_c_d=abs(pitch_c-pitch_f);
-    }
-  }
-  return;
+int round_int(int x,int rnd){
+  int y=x%rnd;
+  if(x>=rnd/2)
+  x=x+(rnd-y);
+  else
+  x=x-y;
+  return x;
 }
-
 void manual_control() {
   int js = analogRead(vry);
   int jsup = analogRead(vrx);
@@ -173,7 +179,7 @@ void read_yaw() {
     oldPosition = newPosition;
     degrees = newPosition;
     degrees = degrees / 2400 * 360; //this encoder has 2400 steps/rev
-    Serial.println(degrees);
+    //Serial.println(degrees);
   }
   return degrees;
 }
@@ -201,15 +207,21 @@ void read_pitch() {
     // "Wire.read()<<8 | Wire.read();" means two registers are read and stored in the same variable
     accelerometer_x = Wire.read()<<8 | Wire.read(); // reading registers: 0x3B (ACCEL_XOUT_H) and 0x3C (ACCEL_XOUT_L)
     accelerometer_y = Wire.read()<<8 | Wire.read(); // reading registers: 0x3D (ACCEL_YOUT_H) and 0x3E (ACCEL_YOUT_L)
-    //Serial.println(accelerometer_y);    
-    accel_vals[0]=accelerometer_y;//pitch
+    //Serial.println(accelerometer_y);
+    if(accelerometer_y<accel_vals[0]-1000){
+      read_pitch();//yes, this is a terrible idea
+    }
+    else if(accelerometer_y<0){
+      read_pitch(); //oh boy...  what could go wrong here...
+    }
+    else{ 
+    accel_vals[0]=accelerometer_y; //pitch
     accel_vals[1]=accelerometer_x;//roll
+    }
     //Serial.print("aX = "); Serial.print(convert_int16_to_str(accelerometer_x));
     //Serial.print(" | aY = "); Serial.print(convert_int16_to_str(accelerometer_y));
     //Serial.print(" | aZ = "); Serial.print(convert_int16_to_str(accelerometer_z));
     //Serial.println();
-    return;
 }
 return;
 }
-
