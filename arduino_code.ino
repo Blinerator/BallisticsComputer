@@ -6,7 +6,7 @@
 
 const int MPU_ADDR = 0x68; // I2C address of the MPU-6050. If AD0 pin is set to HIGH, the I2C address will be 0x69.
 int16_t accelerometer_x, accelerometer_y, accelerometer_z; // variables for accelerometer raw data
-
+long long int oldPosition=100;
 const int dirPin = 13;
 const int stepPin = 12;
 const int stepsPerRevolution = 2000;
@@ -17,7 +17,6 @@ const int button = 7;
 const int motor_enable = 4;
 int mp = 0;
 int joystick_enable = 0, automated_motor_enable = 0;
-long oldPosition = -999;
 float degrees = 0;
 int yaw = 0, pitch = 0;
 unsigned long long t1 = 0, t2=0;
@@ -40,6 +39,7 @@ void setup() {
   pinMode(LNup, OUTPUT);
   pinMode(LNdn, OUTPUT);
   pinMode(9, OUTPUT);
+  pinMode(7,OUTPUT);
 }
 
 void loop() {
@@ -60,22 +60,13 @@ void loop() {
         joystick_enable = command_array[2].toInt();
         automated_motor_enable = command_array[3].toInt();
       }
-    /*
-    Serial.print("yaw:");
-    Serial.println(yaw);
-    Serial.print("pitch:");
-    Serial.println(pitch);
-    Serial.print("Joystick_enable:");
-    Serial.println(joystick_enable);
-    Serial.print("automated_motor_enable:");
-    Serial.println(automated_motor_enable);
-    /**/
   }
   if (joystick_enable == 0) {
     manual_control();
   } 
   if (automated_motor_enable == 1) {
       buzzer();
+      set_yaw(read_yaw(),yaw);
       for(int i=0;i<2;i++){//how many iterations to run on the angle adjustment.  more iterations may mean more accurate
         read_pitch();
         int pitch_i = accel_vals[0];  //current pitch
@@ -83,14 +74,16 @@ void loop() {
         set_pitch(pitch_i, pitch_f);
         analogWrite(LNup,0);
         analogWrite(LNdn,0);
-        delay(1000);
+        delay(2000);
       }
     buzzer_f();
-    buzzer_f();       
+    buzzer_f();  
+    Serial.println(accel_vals[0]); 
+    delay(1000);
+    digitalWrite(7,HIGH);
+    delay(500);
+    digitalWrite(7,LOW);    
   }
-  //else {
-    //digitalWrite(motor_enable, LOW);  //ensure motors can't move if they aren't in manual control mode
-//}
 }
 
 void set_pitch(int pitch_i, int pitch_f){
@@ -107,7 +100,7 @@ void set_pitch(int pitch_i, int pitch_f){
     int pitch_c=pitch_i;//initializing current pitch to initial pitch
     int fi=0;
     int PWM=0;
-    while(dTheta_c > 100){
+    while(dTheta_c > 10){
       fi=abs(dTheta-dTheta_c);//starts at zero, grows until reaches max value then recedes back down
       PWM=PWMm*sin(fi*3.1415/dTheta)+30; //dTheta defines period, fi defines where in the period we are
       if(PWM<0)//error checking and ensuring slow adjtment
@@ -130,6 +123,30 @@ void set_pitch(int pitch_i, int pitch_f){
     return;
     }
   }
+
+
+void set_yaw(int yaw_c, int yaw_f){
+  int dTheta = abs(yaw_c-yaw_f);
+  int speed = 8000; //higher value gives lower speed.  Keep it between 10000 and 1500.
+  while(dTheta!=0){//margin is 5, a.k.a. 0.3 degrees
+
+    if(yaw_c-yaw_f>0)//setting direction
+    digitalWrite(dirPin, HIGH);
+    else
+    digitalWrite(dirPin, LOW);
+
+    digitalWrite(stepPin, HIGH);  //start rotation.  replace this with a function in the future
+    delayMicroseconds(speed);
+    digitalWrite(stepPin, LOW);
+    delayMicroseconds(speed);
+    
+    yaw_c=read_yaw();
+    dTheta=abs(yaw_c-yaw_f);
+
+  }
+
+}
+
 int round_int(int x,int rnd){
   int y=x%rnd;
   if(x>=rnd/2)
@@ -141,7 +158,6 @@ int round_int(int x,int rnd){
 void manual_control() {
   int js = analogRead(vry);
   int jsup = analogRead(vrx);
-  //Serial.println(jsup);
   digitalWrite(motor_enable, HIGH);
   if (jsup > 590) {
     mp = map(jsup, 590, 1024, 10, 100);
@@ -173,15 +189,14 @@ void manual_control() {
   }
 }
 
-void read_yaw() {
+long read_yaw() {
   long newPosition = myEnc.read();
   if (newPosition != oldPosition) {
     oldPosition = newPosition;
-    degrees = newPosition;
-    degrees = degrees / 2400 * 360; //this encoder has 2400 steps/rev
-    //Serial.println(degrees);
+    //degrees = newPosition;
+    //degrees = degrees / 2400 * 360; //this encoder has 2400 steps/rev
   }
-  return degrees;
+  return oldPosition;
 }
 
 void buzzer() {
@@ -197,7 +212,7 @@ void buzzer_f(){
   delay(250);
 }
 
-void read_pitch() {
+void read_pitch() {//2
   if (millis() >= t2) { //update array vals if it's been long enough, else last vals are kept
     t2 = millis() + SERIAL_INTERVAL2;  
     Wire.beginTransmission(MPU_ADDR);
