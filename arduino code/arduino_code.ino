@@ -1,37 +1,40 @@
-#define SERIAL_INTERVAL 50
+#define SERIAL_INTERVAL 500
 #define SERIAL_INTERVAL2 400
 
 #include <Encoder.h>
 #include <Wire.h>
-
-const int MPU_ADDR = 0x68; // I2C address of the MPU-6050. If AD0 pin is set to HIGH, the I2C address will be 0x69.
-int16_t accelerometer_x, accelerometer_y, accelerometer_z; // variables for accelerometer raw data
-long long int oldPosition=100;
-const int dirPin = 13;
-const int stepPin = 12;
-const int stepsPerRevolution = 2000;
-const int LNup = 6, LNdn = 5;  //linear actuator pins
-const int vry = A0;
-const int vrx = A1;
-const int button = 7;
-const int motor_enable = 4;
-int mp = 0;
-int joystick_enable = 0, automated_motor_enable = 0;
-float degrees = 0;
-int yaw = 0, pitch = 0;
-unsigned long long t1 = 0, t2=0;
-String incoming, command_array[4];
+#include <MPU6050.h>
+MPU6050 mpu;
 Encoder myEnc(A4, A5);
+long long int oldPosition=100;
+
+unsigned long long t1 = 0, t2=0;
+
+int joystick_enable = 0, automated_motor_enable = 0, mp = 0, yaw = 0, pitch = 0;
 int accel_vals[2];
+
+const int dirPin = 13, stepPin = 12, stepsPerRevolution = 2000;
+const int LNup = 6, LNdn = 5;  //linear actuator pins
+const int vry = A0, vrx = A1;
+const int motor_enable = 4, FIRE=0, Data_Trnsmt=8;
+
+float degrees = 0, v=0;
+
+String incoming, command_array[4];
+
 void setup() {
-  Wire.begin();
-  Wire.beginTransmission(MPU_ADDR); // Begins a transmission to the I2C slave (GY-521 board)
-  Wire.write(0x6B); // PWR_MGMT_1 register
-  Wire.write(0); // set to zero (wakes up the MPU-6050)
-  Wire.endTransmission(true);
+  accel_vals[0]=-15000;
 
   Serial.begin(115200);
   Serial.setTimeout(0.2);
+
+  Serial.println("Initialize MPU6050");
+
+  while(!mpu.begin(MPU6050_SCALE_2000DPS, MPU6050_RANGE_2G))
+  {
+    Serial.println("Could not find a valid MPU6050 sensor, check wiring!");
+    delay(500);
+  }
 
   pinMode(motor_enable, OUTPUT);
   pinMode(stepPin, OUTPUT);
@@ -40,12 +43,38 @@ void setup() {
   pinMode(LNdn, OUTPUT);
   pinMode(9, OUTPUT);
   pinMode(7,OUTPUT);
+  pinMode(FIRE, INPUT_PULLUP);
+  pinMode(Data_Trnsmt, INPUT_PULLUP);
+  pinMode(1, INPUT_PULLUP);
+  pinMode(11, INPUT_PULLUP);
+
+  read_pitch();
 }
 
 void loop() {
+  // Serial.println(digitalRead(1));
+  // Serial.println(digitalRead(11));
+  // delay(100);
+  // Serial.print("Number 1:");
+  // Serial.println(digitalRead(1));
+  // Serial.print("Number 2:");
+  // Serial.println(digitalRead(2));
+  //Serial.println(digitalRead(8));
   if (millis() >= t1) {
     t1 += SERIAL_INTERVAL;
     int stringStart = 0, arrayIndex = 0;
+
+    if(digitalRead(Data_Trnsmt)==LOW){
+      read_pitch();//arduino sends pitch/roll to main pc twice/second   
+      Serial.print(accel_vals[0]);
+      Serial.print(",");
+      Serial.print(accel_vals[1]);
+      Serial.println(",");
+    }
+    // Serial.println(v);
+    int initial_pitch=accel_vals[0];
+    int initial_yaw=read_yaw();
+
     if (Serial.available() > 0)
       incoming = Serial.readString();
       for (int i = 0; i < incoming.length(); i++) {
@@ -78,12 +107,10 @@ void loop() {
       }
     buzzer_f();
     buzzer_f();  
-    Serial.println(accel_vals[0]); 
-    delay(1000);
-    digitalWrite(7,HIGH);
-    delay(500);
-    digitalWrite(7,LOW);    
+    Serial.println(accel_vals[0]);   
   }
+  if(digitalRead(FIRE)==LOW)
+  fire();
 }
 
 void set_pitch(int pitch_i, int pitch_f){
@@ -214,29 +241,56 @@ void buzzer_f(){
 
 void read_pitch() {//2
   if (millis() >= t2) { //update array vals if it's been long enough, else last vals are kept
-    t2 = millis() + SERIAL_INTERVAL2;  
-    Wire.beginTransmission(MPU_ADDR);
-    Wire.write(0x3B); // starting with register 0x3B (ACCEL_XOUT_H) [MPU-6000 and MPU-6050 Register Map and Descriptions Revision 4.2, p.40]
-    Wire.endTransmission(false); // the parameter indicates that the Arduino will send a restart. As a result, the connection is kept active.
-    Wire.requestFrom(MPU_ADDR, 2*2, true); // request a total of 3*2=6 registers
-    // "Wire.read()<<8 | Wire.read();" means two registers are read and stored in the same variable
-    accelerometer_x = Wire.read()<<8 | Wire.read(); // reading registers: 0x3B (ACCEL_XOUT_H) and 0x3C (ACCEL_XOUT_L)
-    accelerometer_y = Wire.read()<<8 | Wire.read(); // reading registers: 0x3D (ACCEL_YOUT_H) and 0x3E (ACCEL_YOUT_L)
-    //Serial.println(accelerometer_y);
-    if(accelerometer_y<accel_vals[0]-1000){
-      read_pitch();//yes, this is a terrible idea
-    }
-    else if(accelerometer_y<0){
-      read_pitch(); //oh boy...  what could go wrong here...
-    }
-    else{ 
+    Vector rawAccel = mpu.readRawAccel();
+    int accelerometer_y=rawAccel.YAxis;
+    int accelerometer_x=rawAccel.XAxis;
+
+    // if(accelerometer_y<accel_vals[0]-1000) return;
+    // else if(accelerometer_y<0) return;
+    // else{ 
     accel_vals[0]=accelerometer_y; //pitch
     accel_vals[1]=accelerometer_x;//roll
-    }
-    //Serial.print("aX = "); Serial.print(convert_int16_to_str(accelerometer_x));
-    //Serial.print(" | aY = "); Serial.print(convert_int16_to_str(accelerometer_y));
-    //Serial.print(" | aZ = "); Serial.print(convert_int16_to_str(accelerometer_z));
-    //Serial.println();
-}
+    // }
 return;
+}
+}
+
+void fire(){
+  buzzer_f();
+  buzzer_f();  
+  delay(500);
+  digitalWrite(7,HIGH);
+  if((digitalRead(1)==HIGH)&&(digitalRead(11)==HIGH)){
+    delay(10);
+    take_v();
+    digitalWrite(7,LOW);
+  }
+  else{
+    delay(250);
+    digitalWrite(7,LOW);
+  }
+}
+
+void take_v(){
+  unsigned long int t=0;
+  v=0;
+  bool passed_first=false;
+  while(1==1){
+    bool r1=digitalRead(11);
+    bool r2=digitalRead(1);
+    if((r1==LOW)&&passed_first==false){
+      //Serial.println("First");
+      t=micros();
+      //Serial.println(t);
+      passed_first=true;
+    }
+    else if((r2==LOW)&&passed_first==true){
+      //Serial.println("Sec");
+      t=micros()-t;
+      //Serial.println(t);
+      v=71.00/t*1000;
+      Serial.println(v);
+      return;
+    }
+  }
 }
