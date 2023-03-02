@@ -5,6 +5,8 @@ import math
 import re
 import parse
 def write_to_arduino(yaw,pitch,joystick_enable,automated_motor_enable,COMPRT_a):
+    
+#the arduino is constantly checking for a series of values to be sent.  The format is pre-defined in arduino code
 
     angles = f"{yaw},{pitch},{joystick_enable},{automated_motor_enable},"
 
@@ -18,6 +20,8 @@ def write_to_arduino(yaw,pitch,joystick_enable,automated_motor_enable,COMPRT_a):
     return
 
 def read_arduino_sensors(COMPRT_a):
+    #control panel has a switch that makes arduino send roll and pitch values over serial
+    
     arduino = serial.Serial(COMPRT_a,115200, bytesize=8,stopbits=1,timeout=1)
 
     raw=arduino.readline()
@@ -28,8 +32,11 @@ def read_arduino_sensors(COMPRT_a):
     print(normalized_pitch)
     #print(velocity)
     return normalized_pitch, roll
-#read_arduino_sensors("COM5")
+
 def takerange(COMPRT_b):
+    
+#lazer rangefinder returns range when byte sequence is sent to it.  Sequence is specific to this model.
+#Note that the LRF never stops taking range unless stop_takerange() is called.
 
     ser = serial.Serial(COMPRT_b,115200, bytesize=8,stopbits=1,timeout=1)
 
@@ -45,8 +52,8 @@ def takerange(COMPRT_b):
     s = str(ser.readline())
     print(s)
     s = parse.p(s)
-    #stop_takerange(COMPRT_b)
     return s
+
 def stop_takerange(COMPRT_b):
     ser = serial.Serial(COMPRT_b,115200, bytesize=8,stopbits=1,timeout=1)
     
