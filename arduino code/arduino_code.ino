@@ -65,10 +65,18 @@ void loop() {
     int stringStart = 0, arrayIndex = 0;
 
     if(digitalRead(Data_Trnsmt)==LOW){
-      read_pitch();//arduino sends pitch/roll to main pc twice/second   
+      int avg_r=0;
+      for(int i=0; i<10; i++){//finding the average of ten roll measurements
+        read_pitch();
+        delay(50);
+        avg_r=(avg_r+accel_vals[1])/(i+1);//average
+      }
+
+
+      //arduino sends pitch/roll to main pc twice/second   
       Serial.print(accel_vals[0]);
       Serial.print(",");
-      Serial.print(accel_vals[1]);
+      Serial.print(avg_r);
       Serial.println(",");
     }
     // Serial.println(v);
